@@ -10,6 +10,56 @@ describe('$location', function() {
     jqLite(document).off('click');
   });
 
+
+  describe('File Protocol', function () {
+    var urlParsingNodePlaceholder;
+
+    beforeEach(inject(function ($sniffer) {
+      if ($sniffer.msie) return;
+
+      urlParsingNodePlaceholder = urlParsingNode;
+
+      //temporarily overriding the DOM element
+      //with output from IE, if not in IE
+      urlParsingNode = {
+        hash : "#/C:/",
+        host : "",
+        hostname : "",
+        href : "file:///C:/base#!/C:/foo",
+        pathname : "/C:/foo",
+        port : "",
+        protocol : "file:",
+        search : "",
+        setAttribute: angular.noop
+      };
+    }));
+
+    afterEach(inject(function ($sniffer) {
+      if ($sniffer.msie) return;
+      //reset urlParsingNode
+      urlParsingNode = urlParsingNodePlaceholder;
+      expect(urlParsingNode.pathname).not.toBe('/C:/foo');
+    }));
+
+
+    it('should not include the drive name in path() on WIN', function (){
+      //See issue #4680 for details
+      url = new LocationHashbangUrl('file:///base', '#!');
+      url.$$parse('file:///base#!/foo?a=b&c#hash');
+
+      expect(url.path()).toBe('/foo');
+    });
+
+
+    it('should include the drive name if it was provided in the input url', function () {
+      url = new LocationHashbangUrl('file:///base', '#!');
+      url.$$parse('file:///base#!/C:/foo?a=b&c#hash');
+
+      expect(url.path()).toBe('/C:/foo');
+    });
+  });
+
+
   describe('NewUrl', function() {
     beforeEach(function() {
       url = new LocationHtml5Url('http://www.domain.com:9877/');
@@ -63,6 +113,35 @@ describe('$location', function() {
       url.search('id', null);
 
       expect(url.search()).toEqual({preserved: true});
+    });
+
+
+    it('search() should handle multiple value', function() {
+      url.search('a&b');
+      expect(url.search()).toEqual({a: true, b: true});
+
+      url.search('a', null);
+
+      expect(url.search()).toEqual({b: true});
+
+      url.search('b', undefined);
+      expect(url.search()).toEqual({});
+    });
+
+
+    it('search() should handle single value', function() {
+      url.search('ignore');
+      expect(url.search()).toEqual({ignore: true});
+    });
+
+
+    it('search() should throw error an incorrect argument', function() {
+      expect(function() {
+        url.search(null);
+      }).toThrowMinErr('$location', 'isrcharg', 'The first argument of the `$location#search()` call must be a string or an object.');
+      expect(function() {
+        url.search(undefined);
+      }).toThrowMinErr('$location', 'isrcharg', 'The first argument of the `$location#search()` call must be a string or an object.');
     });
 
 
@@ -190,7 +269,7 @@ describe('$location', function() {
 
       expect(function() {
         url.$$parse('http://other.server.org/path#/path');
-      }).toThrow('[$location:nopp] Invalid url "http://other.server.org/path#/path", missing path prefix "http://server.org/base/".');
+      }).toThrowMinErr('$location', 'ipthprfx', 'Invalid url "http://other.server.org/path#/path", missing path prefix "http://server.org/base/".');
     });
 
 
@@ -199,7 +278,7 @@ describe('$location', function() {
 
       expect(function() {
         url.$$parse('http://server.org/path#/path');
-      }).toThrow('[$location:nopp] Invalid url "http://server.org/path#/path", missing path prefix "http://server.org/base/".');
+      }).toThrowMinErr('$location', 'ipthprfx', 'Invalid url "http://server.org/path#/path", missing path prefix "http://server.org/base/".');
     });
 
 
@@ -309,17 +388,10 @@ describe('$location', function() {
     });
 
 
-    it('should throw error when invalid server url given', function() {
-      expect(function() {
-        url.$$parse('http://server.org/path#/path');
-      }).toThrow('[$location:istart] Invalid url "http://server.org/path#/path", does not start with "http://www.server.org:1234/base".');
-    });
-
-
     it('should throw error when invalid hashbang prefix given', function() {
       expect(function() {
         url.$$parse('http://www.server.org:1234/base#/path');
-      }).toThrow('[$location:nohash] Invalid url "http://www.server.org:1234/base#/path", missing hash prefix "#!".');
+      }).toThrowMinErr('$location', 'ihshprfx', 'Invalid url "http://www.server.org:1234/base#/path", missing hash prefix "#!".');
     });
 
 
@@ -598,7 +670,7 @@ describe('$location', function() {
       );
     });
 
-   it('should correctly convert html5 url with path matching basepath to hashbang url', function () {
+    it('should correctly convert html5 url with path matching basepath to hashbang url', function () {
       initService(true, '!', false);
       inject(
         initBrowser('http://domain.com/base/index.html', '/base/index.html'),
@@ -672,69 +744,6 @@ describe('$location', function() {
       );
     });
   });
-
-
-  describe('SERVER_MATCH', function() {
-
-    it('should parse basic url', function() {
-      var match = SERVER_MATCH.exec('http://www.angularjs.org/path?search#hash?x=x');
-
-      expect(match[1]).toBe('http');
-      expect(match[3]).toBe('www.angularjs.org');
-    });
-
-
-    it('should parse file://', function() {
-      var match = SERVER_MATCH.exec('file:///Users/Shared/misko/work/angular.js/scenario/widgets.html');
-
-      expect(match[1]).toBe('file');
-      expect(match[3]).toBe('');
-      expect(match[5]).toBeFalsy();
-    });
-
-
-    it('should parse url with "-" in host', function() {
-      var match = SERVER_MATCH.exec('http://a-b1.c-d.09/path');
-
-      expect(match[1]).toBe('http');
-      expect(match[3]).toBe('a-b1.c-d.09');
-      expect(match[5]).toBeFalsy();
-    });
-
-
-    it('should parse host without "/" at the end', function() {
-      var match = SERVER_MATCH.exec('http://host.org');
-      expect(match[3]).toBe('host.org');
-
-      match = SERVER_MATCH.exec('http://host.org#');
-      expect(match[3]).toBe('host.org');
-
-      match = SERVER_MATCH.exec('http://host.org?');
-      expect(match[3]).toBe('host.org');
-    });
-
-
-    it('should parse chrome extension urls', function() {
-      var match = SERVER_MATCH.exec('chrome-extension://jjcldkdmokihdaomalanmlohibnoplog/index.html?foo#bar');
-
-      expect(match[1]).toBe('chrome-extension');
-      expect(match[3]).toBe('jjcldkdmokihdaomalanmlohibnoplog');
-    });
-
-    it('should parse FFOS app:// urls', function() {
-      var match = SERVER_MATCH.exec('app://{d0419af1-8b42-41c5-96f4-ef4179e52315}/path');
-
-      expect(match[1]).toBe('app');
-      expect(match[3]).toBe('{d0419af1-8b42-41c5-96f4-ef4179e52315}');
-      expect(match[5]).toBeFalsy();
-      expect(match[6]).toBe('/path');
-      expect(match[8]).toBeFalsy();
-
-      match = SERVER_MATCH.exec('app://}foo{')
-      expect(match).toBe(null);
-    });
-  });
-
 
   describe('PATH_MATCH', function() {
 
@@ -1305,7 +1314,7 @@ describe('$location', function() {
     );
 
 
-   it('should listen on click events on href and prevent browser default in hashbang mode', function() {
+    it('should listen on click events on href and prevent browser default in hashbang mode', function() {
       module(function() {
         return function($rootElement, $compile, $rootScope) {
           $rootElement.html('<a href="http://server/#/somePath">link</a>');
@@ -1393,15 +1402,38 @@ describe('$location', function() {
   describe('LocationHashbangUrl', function() {
     var location;
 
-    beforeEach(function() {
-      location = new LocationHashbangUrl('http://server/pre/', 'http://server/pre/#/path');
-    });
-
     it('should rewrite URL', function() {
+      location = new LocationHashbangUrl('http://server/pre/', '#');
+
       expect(location.$$rewrite('http://other')).toEqual(undefined);
       expect(location.$$rewrite('http://server/pre/')).toEqual('http://server/pre/');
       expect(location.$$rewrite('http://server/pre/#otherPath')).toEqual('http://server/pre/#otherPath');
       expect(location.$$rewrite('javascript:void(0)')).toEqual(undefined);
+    });
+
+    it("should not set hash if one was not originally specified", function() {
+      location = new LocationHashbangUrl('http://server/pre/index.html', '#');
+
+      location.$$parse('http://server/pre/index.html')
+      expect(location.url()).toBe('');
+      expect(location.absUrl()).toBe('http://server/pre/index.html');
+    });
+
+    it("should parse hash if one was specified", function() {
+      location = new LocationHashbangUrl('http://server/pre/index.html', '#');
+
+      location.$$parse('http://server/pre/index.html#/foo/bar')
+      expect(location.url()).toBe('/foo/bar');
+      expect(location.absUrl()).toBe('http://server/pre/index.html#/foo/bar');
+    });
+
+
+    it("should prefix hash url with / if one was originally missing", function() {
+      location = new LocationHashbangUrl('http://server/pre/index.html', '#');
+
+      location.$$parse('http://server/pre/index.html#not-starting-with-slash')
+      expect(location.url()).toBe('/not-starting-with-slash');
+      expect(location.absUrl()).toBe('http://server/pre/index.html#/not-starting-with-slash');
     });
   });
 

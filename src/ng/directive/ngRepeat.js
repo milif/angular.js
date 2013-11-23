@@ -12,14 +12,13 @@
  * Special properties are exposed on the local scope of each template instance, including:
  *
  * | Variable  | Type            | Details                                                                     |
- * |===========|=================|=============================================================================|
+ * |-----------|-----------------|-----------------------------------------------------------------------------|
  * | `$index`  | {@type number}  | iterator offset of the repeated element (0..length-1)                       |
  * | `$first`  | {@type boolean} | true if the repeated element is first in the iterator.                      |
  * | `$middle` | {@type boolean} | true if the repeated element is between the first and last in the iterator. |
  * | `$last`   | {@type boolean} | true if the repeated element is last in the iterator.                       |
- *
- * Additionally, you can also provide animations via the ngAnimate attribute to animate the **enter**,
- * **leave** and **move** effects.
+ * | `$even`   | {@type boolean} | true if the iterator position `$index` is even (otherwise false).           |
+ * | `$odd`    | {@type boolean} | true if the iterator position `$index` is odd (otherwise false).            |
  *
  *
  * # Special repeat start and end points
@@ -100,7 +99,7 @@
  *     For example: `item in items track by $id(item)`. A built in `$id()` function can be used to assign a unique
  *     `$$hashKey` property to each item in the array. This property is then used as a key to associated DOM elements
  *     with the corresponding item in the array by identity. Moving the same object in array would move the DOM
- *     element in the same way ian the DOM.
+ *     element in the same way in the DOM.
  *
  *     For example: `item in items track by item.id` is a typical pattern when the items come from the database. In this
  *     case the object identity does not matter. Two objects are considered equivalent as long as their `id`
@@ -128,47 +127,48 @@
       ]">
         I have {{friends.length}} friends. They are:
         <input type="search" ng-model="q" placeholder="filter friends..." />
-        <ul>
-          <li ng-repeat="friend in friends | filter:q"
-              ng-animate="{enter: 'example-repeat-enter',
-                          leave: 'example-repeat-leave',
-                          move: 'example-repeat-move'}">
+        <ul class="example-animate-container">
+          <li class="animate-repeat" ng-repeat="friend in friends | filter:q">
             [{{$index + 1}}] {{friend.name}} who is {{friend.age}} years old.
           </li>
         </ul>
       </div>
     </file>
     <file name="animations.css">
-      .example-repeat-enter,
-      .example-repeat-leave,
-      .example-repeat-move {
+      .example-animate-container {
+        background:white;
+        border:1px solid black;
+        list-style:none;
+        margin:0;
+        padding:0 10px;
+      }
+
+      .animate-repeat {
+        line-height:40px;
+        list-style:none;
+        box-sizing:border-box;
+      }
+
+      .animate-repeat.ng-move,
+      .animate-repeat.ng-enter,
+      .animate-repeat.ng-leave {
         -webkit-transition:all linear 0.5s;
-        -moz-transition:all linear 0.5s;
-        -ms-transition:all linear 0.5s;
-        -o-transition:all linear 0.5s;
         transition:all linear 0.5s;
       }
 
-      .example-repeat-enter {
-        line-height:0;
+      .animate-repeat.ng-leave.ng-leave-active,
+      .animate-repeat.ng-move,
+      .animate-repeat.ng-enter {
         opacity:0;
-      }
-      .example-repeat-enter.example-repeat-enter-active {
-        line-height:20px;
-        opacity:1;
+        max-height:0;
       }
 
-      .example-repeat-leave {
+      .animate-repeat.ng-leave,
+      .animate-repeat.ng-move.ng-move-active,
+      .animate-repeat.ng-enter.ng-enter-active {
         opacity:1;
-        line-height:20px;
+        max-height:40px;
       }
-      .example-repeat-leave.example-repeat-leave-active {
-        opacity:0;
-        line-height:0;
-      }
-
-      .example-repeat-move { }
-      .example-repeat-move.example-repeat-move-active { }
     </file>
     <file name="scenario.js">
        it('should render initial data set', function() {
@@ -193,19 +193,19 @@
       </file>
     </example>
  */
-var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
+var ngRepeatDirective = ['$parse', '$animate', function($parse, $animate) {
   var NG_REMOVED = '$$NG_REMOVED';
   var ngRepeatMinErr = minErr('ngRepeat');
   return {
     transclude: 'element',
     priority: 1000,
     terminal: true,
-    compile: function(element, attr, linker) {
-      return function($scope, $element, $attr){
-        var animate = $animator($scope, $attr);
+    $$tlb: true,
+    link: function($scope, $element, $attr, ctrl, $transclude){
         var expression = $attr.ngRepeat;
         var match = expression.match(/^\s*(.+)\s+in\s+(.*?)\s*(\s+track\s+by\s+(.+)\s*)?$/),
-          trackByExp, trackByExpGetter, trackByIdFn, lhs, rhs, valueIdentifier, keyIdentifier,
+          trackByExp, trackByExpGetter, trackByIdExpFn, trackByIdArrayFn, trackByIdObjFn,
+          lhs, rhs, valueIdentifier, keyIdentifier,
           hashFnLocals = {$id: hashKey};
 
         if (!match) {
@@ -219,7 +219,7 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
 
         if (trackByExp) {
           trackByExpGetter = $parse(trackByExp);
-          trackByIdFn = function(key, value, index) {
+          trackByIdExpFn = function(key, value, index) {
             // assign key, value, and $index to the locals so that they can be used in hash functions
             if (keyIdentifier) hashFnLocals[keyIdentifier] = key;
             hashFnLocals[valueIdentifier] = value;
@@ -227,9 +227,12 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
             return trackByExpGetter($scope, hashFnLocals);
           };
         } else {
-          trackByIdFn = function(key, value) {
+          trackByIdArrayFn = function(key, value) {
             return hashKey(value);
-          }
+          };
+          trackByIdObjFn = function(key) {
+            return key;
+          };
         }
 
         match = lhs.match(/^(?:([\$\w]+)|\(([\$\w]+)\s*,\s*([\$\w]+)\))$/);
@@ -259,14 +262,18 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
               childScope,
               key, value, // key/value of iteration
               trackById,
+              trackByIdFn,
               collectionKeys,
               block,       // last object information {scope, element, id}
-              nextBlockOrder = [];
+              nextBlockOrder = [],
+              elementsToRemove;
 
 
           if (isArrayLike(collection)) {
             collectionKeys = collection;
+            trackByIdFn = trackByIdExpFn || trackByIdArrayFn;
           } else {
+            trackByIdFn = trackByIdExpFn || trackByIdObjFn;
             // if object, extract keys, sort them and use to determine order of iteration over obj props
             collectionKeys = [];
             for (key in collection) {
@@ -285,8 +292,9 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
            key = (collection === collectionKeys) ? index : collectionKeys[index];
            value = collection[key];
            trackById = trackByIdFn(key, value, index);
+           assertNotHasOwnProperty(trackById, '`track by` id');
            if(lastBlockMap.hasOwnProperty(trackById)) {
-             block = lastBlockMap[trackById]
+             block = lastBlockMap[trackById];
              delete lastBlockMap[trackById];
              nextBlockMap[trackById] = block;
              nextBlockOrder[index] = block;
@@ -307,10 +315,12 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
 
           // remove existing items
           for (key in lastBlockMap) {
+            // lastBlockMap is our own object so we don't need to use special hasOwnPropertyFn
             if (lastBlockMap.hasOwnProperty(key)) {
               block = lastBlockMap[key];
-              animate.leave(block.elements);
-              forEach(block.elements, function(element) { element[NG_REMOVED] = true});
+              elementsToRemove = getBlockElements(block);
+              $animate.leave(elementsToRemove);
+              forEach(elementsToRemove, function(element) { element[NG_REMOVED] = true; });
               block.scope.$destroy();
             }
           }
@@ -320,6 +330,7 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
             key = (collection === collectionKeys) ? index : collectionKeys[index];
             value = collection[key];
             block = nextBlockOrder[index];
+            if (nextBlockOrder[index - 1]) previousNode = nextBlockOrder[index - 1].endNode;
 
             if (block.startNode) {
               // if we have already seen this object, then we need to reuse the
@@ -331,11 +342,9 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
                 nextNode = nextNode.nextSibling;
               } while(nextNode && nextNode[NG_REMOVED]);
 
-              if (block.startNode == nextNode) {
-                // do nothing
-              } else {
+              if (block.startNode != nextNode) {
                 // existing item which got moved
-                animate.move(block.elements, null, jqLite(previousNode));
+                $animate.move(getBlockElements(block), null, jqLite(previousNode));
               }
               previousNode = block.endNode;
             } else {
@@ -349,14 +358,17 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
             childScope.$first = (index === 0);
             childScope.$last = (index === (arrayLength - 1));
             childScope.$middle = !(childScope.$first || childScope.$last);
+            // jshint bitwise: false
+            childScope.$odd = !(childScope.$even = (index&1) === 0);
+            // jshint bitwise: true
 
             if (!block.startNode) {
-              linker(childScope, function(clone) {
-                animate.enter(clone, null, jqLite(previousNode));
+              $transclude(childScope, function(clone) {
+                clone[clone.length++] = document.createComment(' end ngRepeat: ' + expression + ' ');
+                $animate.enter(clone, null, jqLite(previousNode));
                 previousNode = clone;
                 block.scope = childScope;
-                block.startNode = clone[0];
-                block.elements = clone;
+                block.startNode = previousNode && previousNode.endNode ? previousNode.endNode : clone[0];
                 block.endNode = clone[clone.length - 1];
                 nextBlockMap[block.id] = block;
               });
@@ -364,7 +376,6 @@ var ngRepeatDirective = ['$parse', '$animator', function($parse, $animator) {
           }
           lastBlockMap = nextBlockMap;
         });
-      };
     }
   };
 }];

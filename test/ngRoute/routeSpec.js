@@ -13,6 +13,7 @@ describe('$route', function() {
       $httpBackend.when('GET', 'foo.html').respond('foo');
       $httpBackend.when('GET', 'baz.html').respond('baz');
       $httpBackend.when('GET', 'bar.html').respond('bar');
+      $httpBackend.when('GET', 'http://example.com/trusted-template.html').respond('cross domain trusted template');
       $httpBackend.when('GET', '404.html').respond('not found');
     };
   }));
@@ -24,7 +25,7 @@ describe('$route', function() {
 
     module(function($routeProvider) {
       $routeProvider.when('/Book/:book/Chapter/:chapter',
-          {controller: noop, templateUrl: 'Chapter.html'});
+          {controller: angular.noop, templateUrl: 'Chapter.html'});
       $routeProvider.when('/Blank', {});
     });
     inject(function($route, $location, $rootScope) {
@@ -67,10 +68,10 @@ describe('$route', function() {
         nextRoute;
 
     module(function($routeProvider) {
-      $routeProvider.when('/Book1/:book/Chapter/:chapter/*highlight/edit',
-          {controller: noop, templateUrl: 'Chapter.html'});
-      $routeProvider.when('/Book2/:book/*highlight/Chapter/:chapter',
-          {controller: noop, templateUrl: 'Chapter.html'});
+      $routeProvider.when('/Book1/:book/Chapter/:chapter/:highlight*/edit',
+          {controller: angular.noop, templateUrl: 'Chapter.html'});
+      $routeProvider.when('/Book2/:book/:highlight*/Chapter/:chapter',
+          {controller: angular.noop, templateUrl: 'Chapter.html'});
       $routeProvider.when('/Blank', {});
     });
     inject(function($route, $location, $rootScope) {
@@ -126,10 +127,10 @@ describe('$route', function() {
         nextRoute;
 
     module(function($routeProvider) {
-      $routeProvider.when('/Book1/:book/Chapter/:chapter/*highlight/edit',
-          {controller: noop, templateUrl: 'Chapter.html', caseInsensitiveMatch: true});
-      $routeProvider.when('/Book2/:book/*highlight/Chapter/:chapter',
-          {controller: noop, templateUrl: 'Chapter.html'});
+      $routeProvider.when('/Book1/:book/Chapter/:chapter/:highlight*/edit',
+          {controller: angular.noop, templateUrl: 'Chapter.html', caseInsensitiveMatch: true});
+      $routeProvider.when('/Book2/:book/:highlight*/Chapter/:chapter',
+          {controller: angular.noop, templateUrl: 'Chapter.html'});
       $routeProvider.when('/Blank', {});
     });
     inject(function($route, $location, $rootScope) {
@@ -244,6 +245,31 @@ describe('$route', function() {
   });
 
 
+  describe('should match a route that contains optional params in the path', function() {
+    beforeEach(module(function($routeProvider) {
+      $routeProvider.when('/test/:opt?/:baz/edit', {templateUrl: 'test.html'});
+    }));
+
+    it('matches a URL with optional params', inject(function($route, $location, $rootScope) {
+      $location.path('/test/optValue/bazValue/edit');
+      $rootScope.$digest();
+      expect($route.current).toBeDefined();
+    }));
+
+    it('matches a URL without optional param', inject(function($route, $location, $rootScope) {
+      $location.path('/test//bazValue/edit');
+      $rootScope.$digest();
+      expect($route.current).toBeDefined();
+    }));
+
+    it('not match a URL with a required param', inject(function($route, $location, $rootScope) {
+      $location.path('///edit');
+      $rootScope.$digest();
+      expect($route.current).not.toBeDefined();
+    }));
+  });
+
+
   it('should change route even when only search param changes', function() {
     module(function($routeProvider) {
       $routeProvider.when('/test', {templateUrl: 'test.html'});
@@ -301,6 +327,50 @@ describe('$route', function() {
       $location.url('/baz');
       $rootScope.$digest();
       expect($route.current.templateUrl).toBe('baz.html');
+    });
+  });
+
+
+  it('should skip routes with incomplete params', function() {
+    module(function($routeProvider) {
+      $routeProvider
+        .otherwise({template: 'other'})
+        .when('/pages/:page/:comment*', {template: 'comment'})
+        .when('/pages/:page', {template: 'page'})
+        .when('/pages', {template: 'index'})
+        .when('/foo/', {template: 'foo'})
+        .when('/foo/:bar', {template: 'bar'})
+        .when('/foo/:bar*/:baz', {template: 'baz'});
+    });
+
+    inject(function($route, $location, $rootScope) {
+      $location.url('/pages/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('index');
+
+      $location.url('/pages/page/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('page');
+
+      $location.url('/pages/page/1/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('comment');
+
+      $location.url('/foo/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('foo');
+
+      $location.url('/foo/bar/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('bar');
+
+      $location.url('/foo/bar/baz/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('baz');
+
+      $location.url('/something/');
+      $rootScope.$digest();
+      expect($route.current.template).toBe('other');
     });
   });
 
@@ -510,6 +580,34 @@ describe('$route', function() {
       });
     });
 
+    it('should NOT load cross domain templates by default', function() {
+        module(function($routeProvider) {
+          $routeProvider.when('/foo', { templateUrl: 'http://example.com/foo.html' });
+        });
+
+      inject(function ($route, $location, $rootScope) {
+        $location.path('/foo');
+        expect(function() {
+          $rootScope.$digest();
+        }).toThrowMinErr('$sce', 'insecurl', 'Blocked loading resource from url not allowed by ' +
+          '$sceDelegate policy.  URL: http://example.com/foo.html');
+      });
+    });
+
+    it('should load cross domain templates that are trusted', function() {
+      module(function($routeProvider, $sceDelegateProvider) {
+        $routeProvider.when('/foo', { templateUrl: 'http://example.com/foo.html' });
+        $sceDelegateProvider.resourceUrlWhitelist([/^http:\/\/example\.com\/foo\.html$/]);
+      });
+
+      inject(function ($route, $location, $rootScope) {
+        $httpBackend.whenGET('http://example.com/foo.html').respond('FOO BODY');
+        $location.path('/foo');
+        $rootScope.$digest();
+        $httpBackend.flush();
+        expect($route.current.locals.$template).toEqual('FOO BODY');
+      });
+    });
 
     it('should not update $routeParams until $routeChangeSuccess', function() {
       module(function($routeProvider) {
@@ -520,8 +618,8 @@ describe('$route', function() {
 
       inject(function($route, $httpBackend, $location, $rootScope, $routeParams) {
         var log = '';
-        $rootScope.$on('$routeChangeStart', function(e, next) { log += '$before' + toJson($routeParams) + ';'});
-        $rootScope.$on('$routeChangeSuccess', function(e, next) { log += '$after' + toJson($routeParams) + ';'});
+        $rootScope.$on('$routeChangeStart', function(e, next) { log += '$before' + angular.toJson($routeParams) + ';'});
+        $rootScope.$on('$routeChangeSuccess', function(e, next) { log += '$after' + angular.toJson($routeParams) + ';'});
 
         $httpBackend.whenGET('r1.html').respond('R1');
         $httpBackend.whenGET('r2.html').respond('R2');
@@ -695,6 +793,8 @@ describe('$route', function() {
       module(function($routeProvider) {
         $routeProvider.when('/foo/:id/foo/:subid/:extraId', {redirectTo: '/bar/:id/:subid/23'});
         $routeProvider.when('/bar/:id/:subid/:subsubid', {templateUrl: 'bar.html'});
+        $routeProvider.when('/baz/:id/:path*', {redirectTo: '/path/:path/:id'});
+        $routeProvider.when('/path/:path*/:id', {templateUrl: 'foo.html'});
       });
 
       inject(function($route, $location, $rootScope) {
@@ -704,6 +804,11 @@ describe('$route', function() {
         expect($location.path()).toEqual('/bar/id1/subid3/23');
         expect($location.search()).toEqual({extraId: 'gah'});
         expect($route.current.templateUrl).toEqual('bar.html');
+
+        $location.path('/baz/1/foovalue/barvalue');
+        $rootScope.$digest();
+        expect($location.path()).toEqual('/path/foovalue/barvalue/1');
+        expect($route.current.templateUrl).toEqual('foo.html');
       });
     });
 
@@ -771,7 +876,7 @@ describe('$route', function() {
       var reloaded = jasmine.createSpy('route reload');
 
       module(function($routeProvider) {
-        $routeProvider.when('/foo', {controller: noop});
+        $routeProvider.when('/foo', {controller: angular.noop});
       });
 
       inject(function($route, $location, $rootScope, $routeParams) {
@@ -796,7 +901,7 @@ describe('$route', function() {
           routeUpdate = jasmine.createSpy('route update');
 
       module(function($routeProvider) {
-        $routeProvider.when('/foo', {controller: noop, reloadOnSearch: false});
+        $routeProvider.when('/foo', {controller: angular.noop, reloadOnSearch: false});
       });
 
       inject(function($route, $location, $rootScope) {
@@ -826,7 +931,7 @@ describe('$route', function() {
       var routeChange = jasmine.createSpy('route change');
 
       module(function($routeProvider) {
-        $routeProvider.when('/foo/:fooId', {controller: noop, reloadOnSearch: false});
+        $routeProvider.when('/foo/:fooId', {controller: angular.noop, reloadOnSearch: false});
       });
 
       inject(function($route, $location, $rootScope) {
@@ -858,8 +963,8 @@ describe('$route', function() {
       var routeParamsWatcher = jasmine.createSpy('routeParamsWatcher');
 
       module(function($routeProvider) {
-        $routeProvider.when('/foo', {controller: noop});
-        $routeProvider.when('/bar/:barId', {controller: noop, reloadOnSearch: false});
+        $routeProvider.when('/foo', {controller: angular.noop});
+        $routeProvider.when('/bar/:barId', {controller: angular.noop, reloadOnSearch: false});
       });
 
       inject(function($route, $location, $rootScope, $routeParams) {
@@ -904,7 +1009,7 @@ describe('$route', function() {
         return '<h1>' + routePathParams.id + '</h1>';
       }
 
-      module(function($routeProvider){
+      module(function($routeProvider) {
         $routeProvider.when('/bar/:id/:subid/:subsubid', {templateUrl: 'bar.html'});
         $routeProvider.when('/foo/:id', {template: customTemplateFn});
       });

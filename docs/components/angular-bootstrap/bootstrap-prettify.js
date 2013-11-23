@@ -7,6 +7,7 @@ var DEPENDENCIES = {
   'angular.js': 'http://code.angularjs.org/' + angular.version.full + '/angular.min.js',
   'angular-resource.js': 'http://code.angularjs.org/' + angular.version.full + '/angular-resource.min.js',
   'angular-route.js': 'http://code.angularjs.org/' + angular.version.full + '/angular-route.min.js',
+  'angular-animate.js': 'http://code.angularjs.org/' + angular.version.full + '/angular-animate.min.js',
   'angular-sanitize.js': 'http://code.angularjs.org/' + angular.version.full + '/angular-sanitize.min.js',
   'angular-cookies.js': 'http://code.angularjs.org/' + angular.version.full + '/angular-cookies.min.js'
 };
@@ -101,7 +102,12 @@ directive.prettyprint = ['reindentCode', function(reindentCode) {
       //ensure that angular won't compile {{ curly }} values
       html = html.replace(/\{\{/g, '<span>{{</span>')
                  .replace(/\}\}/g, '<span>}}</span>');
-      element.html(window.prettyPrintOne(reindentCode(html), undefined, true));
+      if (window.RUNNING_IN_NG_TEST_RUNNER) {
+        element.html(html);
+      }
+      else {
+        element.html(window.prettyPrintOne(reindentCode(html), undefined, true));
+      }
     }
   };
 }];
@@ -163,32 +169,34 @@ directive.ngSetHtml = ['getEmbeddedTemplate', function(getEmbeddedTemplate) {
 directive.ngEvalJavascript = ['getEmbeddedTemplate', function(getEmbeddedTemplate) {
   return {
     compile: function (element, attr) {
-      var script = getEmbeddedTemplate(attr.ngEvalJavascript);
-
-      try {
-        if (window.execScript) { // IE
-          window.execScript(script || '""'); // IE complains when evaling empty string
-        } else {
-          window.eval(script);
+      var fileNames = attr.ngEvalJavascript.split(' ');
+      angular.forEach(fileNames, function(fileName) {
+        var script = getEmbeddedTemplate(fileName);
+        try {
+          if (window.execScript) { // IE
+            window.execScript(script || '""'); // IE complains when evaling empty string
+          } else {
+            window.eval(script + '//@ sourceURL=' + fileName);
+          }
+        } catch (e) {
+          if (window.console) {
+            window.console.log(script, '\n', e);
+          } else {
+            window.alert(e);
+          }
         }
-      } catch (e) {
-        if (window.console) {
-          window.console.log(script, '\n', e);
-        } else {
-          window.alert(e);
-        }
-      }
+      });
     }
   };
 }];
 
 
-directive.ngEmbedApp = ['$templateCache', '$browser', '$rootScope', '$location', '$sniffer',
-                function($templateCache,   $browser,  docsRootScope, $location,   $sniffer) {
+directive.ngEmbedApp = ['$templateCache', '$browser', '$rootScope', '$location', '$sniffer', '$animate',
+                function($templateCache,   $browser,  docsRootScope, $location,   $sniffer,   $animate) {
   return {
     terminal: true,
     link: function(scope, element, attrs) {
-      var modules = [],
+      var modules = ['ngAnimate'],
           embedRootScope,
           deregisterEmbedRootScope;
 
@@ -197,6 +205,7 @@ directive.ngEmbedApp = ['$templateCache', '$browser', '$rootScope', '$location',
         $provide.value('$anchorScroll', angular.noop);
         $provide.value('$browser', $browser);
         $provide.value('$sniffer', $sniffer);
+        $provide.value('$animate', $animate);
         $provide.provider('$location', function() {
           this.$get = ['$rootScope', function($rootScope) {
             docsRootScope.$on('$locationChangeSuccess', function(event, oldUrl, newUrl) {
@@ -219,6 +228,11 @@ directive.ngEmbedApp = ['$templateCache', '$browser', '$rootScope', '$location',
         }]);
         $provide.decorator('$rootScope', ['$delegate', function($delegate) {
           embedRootScope = $delegate;
+
+          // Since we are teleporting the $animate service, which relies on the $$postDigestQueue
+          // we need the embedded scope to use the same $$postDigestQueue as the outer scope
+          embedRootScope.$$postDigestQueue = docsRootScope.$$postDigestQueue;
+
           deregisterEmbedRootScope = docsRootScope.$watch(function embedRootScopeDigestWatch() {
             embedRootScope.$digest();
           });
@@ -239,6 +253,7 @@ directive.ngEmbedApp = ['$templateCache', '$browser', '$rootScope', '$location',
         embedRootScope.$destroy();
       });
 
+      element.data('$injector', null);
       angular.bootstrap(element, modules);
     }
   };

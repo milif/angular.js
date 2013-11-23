@@ -193,7 +193,9 @@ directive.table = function() {
   return {
     restrict: 'E',
     link: function(scope, element, attrs) {
-      element[0].className = 'table table-bordered table-striped code-table';
+      if (!attrs['class']) {
+        element.addClass('table table-bordered table-striped code-table');
+      }
     }
   };
 };
@@ -257,7 +259,7 @@ var popoverElement = function() {
 
     content : function(value) { 
       if(value && value.length > 0) {
-        value = new Showdown.converter().makeHtml(value);
+        value = marked(value);
       }
       return this.contentElement.html(value);
     },
@@ -335,12 +337,11 @@ directive.tabPane = function() {
   };
 };
 
-directive.foldout = ['$http', '$animator','$window', function($http, $animator, $window) {
+directive.foldout = ['$http', '$animate','$window', function($http, $animate, $window) {
   return {
     restrict: 'A',
     priority : 500,
     link: function(scope, element, attrs) {
-      var animator = $animator(scope, { ngAnimate: "'foldout'" });
       var container, loading, url = attrs.url;
       if(/\/build\//.test($window.location.href)) {
         url = '/build/docs' + url;
@@ -353,7 +354,7 @@ directive.foldout = ['$http', '$animator','$window', function($http, $animator, 
             loading = true;
             var par = element.parent();
             container = angular.element('<div class="foldout">loading...</div>');
-            animator.enter(container, null, par);
+            $animate.enter(container, null, par);
 
             $http.get(url, { cache : true }).success(function(html) {
               loading = false;
@@ -367,12 +368,12 @@ directive.foldout = ['$http', '$animator','$window', function($http, $animator, 
               //avoid showing the element if the user has already closed it
               if(container.css('display') == 'block') {
                 container.css('display','none');
-                animator.show(container);
+                $animate.addClass(container, 'ng-hide');
               }
             });
           }
           else {
-            container.css('display') == 'none' ? animator.show(container) : animator.hide(container);
+            container.hasClass('ng-hide') ? $animate.removeClass(container, 'ng-hide') : $animate.addClass(container, 'ng-hide');
           }
         });
       });
@@ -380,4 +381,12 @@ directive.foldout = ['$http', '$animator','$window', function($http, $animator, 
   }
 }];
 
-angular.module('bootstrap', []).directive(directive).factory('popoverElement', popoverElement);
+angular.module('bootstrap', [])
+  .directive(directive)
+  .factory('popoverElement', popoverElement)
+  .run(function() {
+    marked.setOptions({
+      gfm: true,
+      tables: true
+    });
+  });

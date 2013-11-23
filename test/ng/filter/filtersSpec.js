@@ -145,9 +145,24 @@ describe('filters', function() {
       expect(number(1234.567, 2)).toEqual("1,234.57");
     });
 
-    it('should filter exponential numbers', function() {
-      expect(number(1e50, 0)).toEqual('1e+50');
-      expect(number(-2e50, 2)).toEqual('-2e+50');
+    it('should filter exponentially large numbers', function() {
+      expect(number(1e50)).toEqual('1e+50');
+      expect(number(-2e100)).toEqual('-2e+100');
+    });
+
+    it('should ignore fraction sizes for large numbers', function() {
+      expect(number(1e50, 2)).toEqual('1e+50');
+      expect(number(-2e100, 5)).toEqual('-2e+100');
+    });
+
+    it('should filter exponentially small numbers', function() {
+      expect(number(1e-50, 0)).toEqual('0');
+      expect(number(1e-6, 6)).toEqual('0.000001');
+      expect(number(1e-7, 6)).toEqual('0.000000');
+
+      expect(number(-1e-50, 0)).toEqual('-0');
+      expect(number(-1e-6, 6)).toEqual('-0.000001');
+      expect(number(-1e-7, 6)).toEqual('-0.000000');
     });
   });
 
@@ -229,6 +244,13 @@ describe('filters', function() {
 
       expect(date(earlyDate, "MMMM dd, y")).
                       toEqual('September 03, 1');
+    });
+
+    it('should accept negative numbers as strings', function() {
+      //Note: this tests a timestamp set for 3 days before the unix epoch.
+      //The behavior of `date` depends on your timezone, which is why we check just
+      //the year and not the whole daye. See Issue #4218
+      expect(date('-259200000').split(' ')[2]).toEqual('1969');
     });
 
     it('should format timezones correctly (as per ISO_8601)', function() {

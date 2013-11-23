@@ -31,6 +31,58 @@ describe("resource", function() {
     $httpBackend.verifyNoOutstandingExpectation();
   });
 
+  describe('isValidDottedPath', function() {
+    it('should support arbitrary dotted names', function() {
+      expect(isValidDottedPath('')).toBe(false);
+      expect(isValidDottedPath('1')).toBe(false);
+      expect(isValidDottedPath('1abc')).toBe(false);
+      expect(isValidDottedPath('.')).toBe(false);
+      expect(isValidDottedPath('$')).toBe(true);
+      expect(isValidDottedPath('a')).toBe(true);
+      expect(isValidDottedPath('A')).toBe(true);
+      expect(isValidDottedPath('a1')).toBe(true);
+      expect(isValidDottedPath('$a')).toBe(true);
+      expect(isValidDottedPath('$1')).toBe(true);
+      expect(isValidDottedPath('$$')).toBe(true);
+      expect(isValidDottedPath('$.$')).toBe(true);
+      expect(isValidDottedPath('.$')).toBe(false);
+      expect(isValidDottedPath('$.')).toBe(false);
+    });
+  });
+
+  describe('lookupDottedPath', function() {
+    var data = {a: {b: 'foo', c: null}};
+
+    it('should throw for invalid path', function() {
+      expect(function() {
+        lookupDottedPath(data, '.ckck')
+      }).toThrowMinErr('$resource', 'badmember',
+                       'Dotted member path "@.ckck" is invalid.');
+    });
+
+    it('should get dotted paths', function() {
+      expect(lookupDottedPath(data, 'a')).toEqual({b: 'foo', c: null});
+      expect(lookupDottedPath(data, 'a.b')).toBe('foo');
+      expect(lookupDottedPath(data, 'a.c')).toBeNull();
+    });
+
+    it('should skip over null/undefined members', function() {
+      expect(lookupDottedPath(data, 'a.b.c')).toBe(undefined);
+      expect(lookupDottedPath(data, 'a.c.c')).toBe(undefined);
+      expect(lookupDottedPath(data, 'a.b.c.d')).toBe(undefined);
+      expect(lookupDottedPath(data, 'NOT_EXIST')).toBe(undefined);
+    });
+  });
+
+  it('should not include a request body when calling $delete', function() {
+    $httpBackend.expect('DELETE', '/fooresource', null).respond({});
+    var Resource = $resource('/fooresource');
+    var resource = new Resource({ foo: 'bar' });
+
+    resource.$delete();
+    $httpBackend.flush();
+  });
+
 
   it("should build resource", function() {
     expect(typeof CreditCard).toBe('function');
@@ -179,6 +231,19 @@ describe("resource", function() {
   });
 
 
+  it('should support @_property lookups with underscores', function() {
+    $httpBackend.expect('GET', '/Order/123').respond({_id: {_key:'123'}, count: 0});
+    var LineItem = $resource('/Order/:_id', {_id: '@_id._key'});
+    var item = LineItem.get({_id: 123});
+    $httpBackend.flush();
+    expect(item).toEqualData({_id: {_key: '123'}, count: 0});
+    $httpBackend.expect('POST', '/Order/123').respond({_id: {_key:'123'}, count: 1});
+    item.$save();
+    $httpBackend.flush();
+    expect(item).toEqualData({_id: {_key: '123'}, count: 1});
+  });
+
+
   it('should not pass default params between actions', function() {
     var R = $resource('/Path', {}, {get: {method: 'GET', params: {objId: '1'}}, perform: {method: 'GET'}});
 
@@ -229,6 +294,13 @@ describe("resource", function() {
     $httpBackend.expect('GET', '/1/1');
 
     R.get({id:1});
+  });
+
+
+  it('should throw an exception if a param is called "hasOwnProperty"', function() {
+     expect(function() {
+      $resource('/:hasOwnProperty').get();
+     }).toThrowMinErr('$resource','badname', "hasOwnProperty is not a valid parameter name");
   });
 
 
@@ -461,6 +533,18 @@ describe("resource", function() {
     expect(person.name).toEqual('misko');
   });
 
+  it('should return a resource instance when calling a class method with a resource instance', function() {
+    $httpBackend.expect('GET', '/Person/123').respond('{"name":"misko"}');
+    var Person = $resource('/Person/:id');
+    var person = Person.get({id:123});
+    $httpBackend.flush();
+    $httpBackend.expect('POST', '/Person').respond('{"name":"misko2"}');
+
+    var person2 = Person.save(person);
+    $httpBackend.flush();
+
+    expect(person2).toEqual(jasmine.any(Person));
+  });
 
   describe('promise api', function() {
 
@@ -630,6 +714,38 @@ describe("resource", function() {
 
         expect(cc.url).toBe('/new-id');
       });
+
+      it('should pass the same transformed value to success callbacks and to promises', function() {
+        $httpBackend.expect('GET', '/CreditCard').respond(200, { value: 'original' });
+
+        var transformResponse = function (response) {
+          return { value: 'transformed' };
+        };
+
+        var CreditCard = $resource('/CreditCard', {}, {
+          call: {
+            method: 'get',
+            interceptor: { response: transformResponse }
+          }
+        });
+
+        var successValue,
+            promiseValue;
+
+        var cc = new CreditCard({ name: 'Me' });
+
+        var req = cc.$call({}, function (result) {
+          successValue = result;
+        });
+        req.then(function (result) {
+          promiseValue = result;
+        });
+
+        $httpBackend.flush();
+        expect(successValue).toEqual({ value: 'transformed' });
+        expect(promiseValue).toEqual({ value: 'transformed' });
+        expect(successValue).toBe(promiseValue);
+      });
     });
 
 
@@ -797,7 +913,7 @@ describe("resource", function() {
     });
 
 
-    it('should call the error callback if provided on non 2xx response', function() {
+    it('should call the error callback if provided on non 2xx response (without data)', function() {
       $httpBackend.expect('GET', '/CreditCard').respond(ERROR_CODE, ERROR_RESPONSE);
 
       CreditCard.get(callback, errorCB);
@@ -806,7 +922,6 @@ describe("resource", function() {
       expect(callback).not.toHaveBeenCalled();
     });
   });
-
 
   it('should transform request/response', function() {
     var Person = $resource('/Person/:id', {}, {
@@ -878,8 +993,8 @@ describe("resource", function() {
         expect(user).toEqualData([ {id: 1, name: 'user1'} ]);
       });
     });
-    
-    describe('get', function(){ 
+
+    describe('get', function(){
       it('should add them to the id', function() {
         $httpBackend.expect('GET', '/users/1.json').respond({id: 1, name: 'user1'});
         var UserService = $resource('/users/:user_id.json', {user_id: '@id'});
@@ -909,7 +1024,7 @@ describe("resource", function() {
         var UserService = $resource('/users/:user_id', {user_id: '@id'}, {
           get: {
             method: 'GET',
-            url: '/users/:user_id.json' 
+            url: '/users/:user_id.json'
           }
         });
         var user = UserService.get({user_id: 1});
@@ -1033,4 +1148,56 @@ describe("resource", function() {
       expect(item).toEqualData({id: 'abc'});
     });
   });
+});
+
+describe('resource', function() {
+  var $httpBackend, $resource;
+
+  beforeEach(module(function($exceptionHandlerProvider) {
+    $exceptionHandlerProvider.mode('log');
+  }));
+
+  beforeEach(module('ngResource'));
+
+  beforeEach(inject(function($injector) {
+    $httpBackend = $injector.get('$httpBackend');
+    $resource = $injector.get('$resource');
+  }));
+
+
+  it('should fail if action expects an object but response is an array', function() {
+    var successSpy = jasmine.createSpy('successSpy');
+    var failureSpy = jasmine.createSpy('failureSpy');
+
+    $httpBackend.expect('GET', '/Customer/123').respond({id: 'abc'});
+
+    $resource('/Customer/123').query()
+      .$promise.then(successSpy, function(e) { failureSpy(e.message); });
+    $httpBackend.flush();
+
+    expect(successSpy).not.toHaveBeenCalled();
+    expect(failureSpy).toHaveBeenCalled();
+    expect(failureSpy.mostRecentCall.args[0]).toMatch(
+        /^\[\$resource:badcfg\] Error in resource configuration\. Expected response to contain an array but got an object/
+      );
+  });
+
+  it('should fail if action expects an array but response is an object', function() {
+    var successSpy = jasmine.createSpy('successSpy');
+    var failureSpy = jasmine.createSpy('failureSpy');
+
+    $httpBackend.expect('GET', '/Customer/123').respond([1,2,3]);
+
+    $resource('/Customer/123').get()
+      .$promise.then(successSpy, function(e) { failureSpy(e.message); });
+    $httpBackend.flush();
+
+    expect(successSpy).not.toHaveBeenCalled();
+    expect(failureSpy).toHaveBeenCalled();
+    expect(failureSpy.mostRecentCall.args[0]).toMatch(
+        /^\[\$resource:badcfg\] Error in resource configuration. Expected response to contain an object but got an array/
+      )
+  });
+
+
 });

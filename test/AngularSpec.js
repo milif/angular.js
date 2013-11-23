@@ -31,6 +31,29 @@ describe('angular', function() {
       expect(copy(date) === date).toBeFalsy();
     });
 
+    it("should copy RegExp", function() {
+      var re = new RegExp(".*");
+      expect(copy(re) instanceof RegExp).toBeTruthy();
+      expect(copy(re).source).toBe(".*");
+      expect(copy(re) === re).toBe(false);
+    });
+
+    it("should copy literal RegExp", function() {
+      var re = /.*/;
+      expect(copy(re) instanceof RegExp).toBeTruthy();
+      expect(copy(re).source).toEqual(".*");
+      expect(copy(re) === re).toBeFalsy();
+    });
+
+    it("should deeply copy literal RegExp", function() {
+      var objWithRegExp = {
+        re: /.*/
+      };
+      expect(copy(objWithRegExp).re instanceof RegExp).toBeTruthy();
+      expect(copy(objWithRegExp).re.source).toEqual(".*");
+      expect(copy(objWithRegExp.re) === objWithRegExp.re).toBeFalsy();
+    });
+
     it("should deeply copy an array into an existing array", function() {
       var src = [1, {name:"value"}];
       var dst = [{key:"v"}];
@@ -65,9 +88,9 @@ describe('angular', function() {
       expect(dst.a).not.toBe(src.a);
     });
 
-    it("should deeply copy an object into an existing object", function() {
+    it("should deeply copy an object into a non-existing object", function() {
       var src = {a:{name:"value"}};
-      var dst = copy(src, dst);
+      var dst = copy(src, undefined);
       expect(src).toEqual({a:{name:"value"}});
       expect(dst).toEqual(src);
       expect(dst).not.toBe(src);
@@ -85,20 +108,20 @@ describe('angular', function() {
 
     it('should throw an exception if a Scope is being copied', inject(function($rootScope) {
       expect(function() { copy($rootScope.$new()); }).
-          toThrow("[ng:cpws] Can't copy! Making copies of Window or Scope instances is not supported.");
+          toThrowMinErr("ng", "cpws", "Can't copy! Making copies of Window or Scope instances is not supported.");
     }));
 
     it('should throw an exception if a Window is being copied', function() {
       expect(function() { copy(window); }).
-          toThrow("[ng:cpws] Can't copy! Making copies of Window or Scope instances is not supported.");
+          toThrowMinErr("ng", "cpws", "Can't copy! Making copies of Window or Scope instances is not supported.");
     });
 
     it('should throw an exception when source and destination are equivalent', function() {
       var src, dst;
 	    src = dst = {key: 'value'};
-      expect(function() { copy(src, dst); }).toThrow("[ng:cpi] Can't copy! Source and destination are identical.");
+      expect(function() { copy(src, dst); }).toThrowMinErr("ng", "cpi", "Can't copy! Source and destination are identical.");
       src = dst = [2, 4];
-      expect(function() { copy(src, dst); }).toThrow("[ng:cpi] Can't copy! Source and destination are identical.");
+      expect(function() { copy(src, dst); }).toThrowMinErr("ng", "cpi", "Can't copy! Source and destination are identical.");
     });
 
     it('should not copy the private $$hashKey', function() {
@@ -289,6 +312,11 @@ describe('angular', function() {
       expect(equals(/^abc/, /abc/)).toBe(false);
       expect(equals(/^abc/, '/^abc/')).toBe(false);
     });
+
+    it('should return false when comparing an object and an array', function() {
+      expect(equals({}, [])).toBe(false);
+      expect(equals([], {})).toBe(false);
+    });
   });
 
   describe('size', function() {
@@ -316,6 +344,46 @@ describe('angular', function() {
 
     it('should not rely on length property of an object to determine its size', function() {
       expect(size({length:99})).toBe(1);
+    });
+  });
+
+
+  describe('csp', function() {
+    var originalSecurityPolicy;
+
+    beforeEach(function() {
+      originalSecurityPolicy = document.securityPolicy;
+    });
+
+    afterEach(function() {
+      document.securityPolicy = originalSecurityPolicy;
+    });
+
+
+    it('should return the false when CSP is not enabled (the default)', function() {
+      expect(csp()).toBe(false);
+    });
+
+
+    it('should return true if CSP is autodetected via CSP v1.1 securityPolicy.isActive property', function() {
+      document.securityPolicy = {isActive: true};
+      expect(csp()).toBe(true);
+    });
+
+    it('should return the true when CSP is enabled manually via [ng-csp]', function() {
+      spyOn(document, 'querySelector').andCallFake(function(selector) {
+        if (selector == '[ng-csp]') return {};
+      });
+      expect(csp()).toBe(true);
+    });
+
+
+    it('should return the true when CSP is enabled manually via [data-ng-csp]', function() {
+      spyOn(document, 'querySelector').andCallFake(function(selector) {
+        if (selector == '[data-ng-csp]') return {};
+      });
+      expect(csp()).toBe(true);
+      expect(document.querySelector).toHaveBeenCalledWith('[data-ng-csp]');
     });
   });
 
@@ -389,11 +457,25 @@ describe('angular', function() {
     });
 
 
+    it('should not break if obj is an array we override hasOwnProperty', function() {
+      var obj = [];
+      obj[0] = 1;
+      obj[1] = 2;
+      obj.hasOwnProperty = null;
+      var log = [];
+      forEach(obj, function(value, key) {
+        log.push(key + ':' + value);
+      });
+      expect(log).toEqual(['0:1', '1:2']);
+    });
+
+
+
     it('should handle JQLite and jQuery objects like arrays', function() {
       var jqObject = jqLite("<p><span>s1</span><span>s2</span></p>").find("span"),
           log = [];
 
-      forEach(jqObject, function(value, key) { log.push(key + ':' + value.innerHTML)});
+      forEach(jqObject, function(value, key) { log.push(key + ':' + value.innerHTML); });
       expect(log).toEqual(['0:s1', '1:s2']);
     });
 
@@ -431,6 +513,13 @@ describe('angular', function() {
 
       forEach(args, function(value, key) { log.push(key + ':' + value)});
       expect(log).toEqual(['0:a', '1:b', '2:c']);
+    });
+
+    it('should handle string values like arrays', function() {
+      var log = [];
+
+      forEach('bar', function(value, key) { log.push(key + ':' + value)});
+      expect(log).toEqual(['0:b', '1:a', '2:r']);
     });
 
 
@@ -628,6 +717,32 @@ describe('angular', function() {
         /\[\$injector:modulerr] Failed to instantiate module doesntexist due to:\n.*\[\$injector:nomod] Module 'doesntexist' is not available! You either misspelled the module name or forgot to load it\./
       );
     });
+
+
+    it('should complain if an element has already been bootstrapped', function () {
+      var element = jqLite('<div>bootstrap me!</div>');
+      angular.bootstrap(element);
+
+      expect(function () {
+        angular.bootstrap(element);
+      }).toThrowMatching(
+        /\[ng:btstrpd\] App Already Bootstrapped with this Element '<div class="?ng\-scope"?( ng\-[0-9]+="?[0-9]+"?)?>'/i
+      );
+
+      dealoc(element);
+    });
+
+
+    it('should complain if manually bootstrapping a document whose <html> element has already been bootstrapped', function () {
+      angular.bootstrap(document.getElementsByTagName('html')[0]);
+      expect(function () {
+        angular.bootstrap(document);
+      }).toThrowMatching(
+        /\[ng:btstrpd\] App Already Bootstrapped with this Element 'document'/i
+      );
+
+      dealoc(document);
+    })
   });
 
 
@@ -847,7 +962,7 @@ describe('angular', function() {
 
         expect(function() {
           element.injector().get('foo');
-        }).toThrow('[$injector:unpr] Unknown provider: fooProvider <- foo');
+        }).toThrowMinErr('$injector', 'unpr', 'Unknown provider: fooProvider <- foo');
 
         expect(element.injector().get('$http')).toBeDefined();
       });
@@ -947,6 +1062,21 @@ describe('angular', function() {
     it('should serialize undefined as undefined', function() {
       expect(toJson(undefined)).toEqual(undefined);
     });
+  });
+
+  describe('msie UA parsing', function() {
+    if (/ Trident\/.*; rv:/.test(window.navigator.userAgent)) {
+      it('should fail when the Trident and the rv versions disagree for IE11+', function() {
+        // When this test fails, we can think about whether we want to use the version from the
+        // Trident token in the UA string or stick with the version from rv: as we currently do.
+        // Refer https://github.com/angular/angular.js/pull/3758#issuecomment-23529245 for the
+        // discussion.
+        var UA = window.navigator.userAgent;
+        var tridentVersion = parseInt((/Trident\/(\d+)/.exec(UA) || [])[1], 10) + 4;
+        var rvVersion = parseInt((/Trident\/.*; rv:(\d+)/.exec(UA) || [])[1], 10);
+        expect(tridentVersion).toBe(rvVersion);
+      });
+    }
   });
 
 });
